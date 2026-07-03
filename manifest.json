@@ -1,0 +1,15 @@
+{
+  "name": "Owlbear.tools",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "Search the 5e.tools bestiary and drop monster tokens onto the board",
+  "icon": "icon.svg",
+  "author": "Milisource",
+  "action": {
+    "title": "Owlbear.tools",
+    "icon": "icon.svg",
+    "popover": "/",
+    "width": 520,
+    "height": 760
+  }
+}
