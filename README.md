@@ -8,15 +8,13 @@ Search the 5e.tools bestiary from inside Owlbear Rodeo and drop monster tokens d
 ---
 
 ## Install
+1. In Owlbear Rodeo, open a room or go to the "Extensions" page in your settings.
+2. Click Extensions in the top bar → **Add Extension**.
+3. Paste the URL to the `manifest.json`.
 
-1. Deploy the extension somewhere accessible (see [Deploying](#deploying)).
-2. In Owlbear Rodeo, open a room.
-3. Click Extensions in the top bar → **Add Extension**.
-4. Paste the URL to your `manifest.json`.
-
-The manifest URL is your host plus `/manifest.json`:
+The manifest URL for this project is:
 ```
-https://your-name.github.io/owlbeartools/manifest.json
+https://milisource.github.io/owlbear-tools/manifest.json
 ```
 
 ## Quick start (development)
