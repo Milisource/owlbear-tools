@@ -143,7 +143,7 @@ function simplify(m) {
 
 OBR.onReady(async () => {
   try {
-    await OBR.action.setIcon(window.location.origin + '/icon.svg');
+    await OBR.action.setIcon(new URL('icon.svg', window.location.href).href);
   } catch (e) { console.error('Icon set failed:', e); }
 
   if (!OBR.isAvailable) {
