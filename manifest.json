@@ -8,7 +8,7 @@
   "action": {
     "title": "Owlbear.tools",
     "icon": "icon.svg",
-    "popover": "/",
+    "popover": "index.html",
     "width": 520,
     "height": 760
   }
