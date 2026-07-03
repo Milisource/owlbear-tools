@@ -11,5 +11,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     copyPublicDir: true,
+    cssMinify: 'esbuild',
+    minify: 'esbuild',
+    sourcemap: false,
+    target: 'es2020',
+    modulePreload: {
+      polyfill: false,
+    },
   },
 });

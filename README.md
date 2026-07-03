@@ -64,7 +64,7 @@ The whole thing is an iframe that OBR loads as an action popover. Inside that if
 3. **Search** as you type. Filtering is local across all loaded sources.
 4. **Click** a monster to drop its token. The token image is pulled from the 5e.tools image mirror, sized by creature size category, and placed at the center of your current viewport.
 
-Each token carries metadata under `com.owlbeartools/monster` so other extensions can read it:
+Each token carries metadata under `com.owlbear.tools/monster` so other extensions can read it:
 
 ```json
 {

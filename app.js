@@ -139,7 +139,34 @@ function simplify(m) {
   };
 }
 
+/*
+ * Avrae-style label abbreviations.
+ * Single word → first 2 uppercase chars (Goblin → GO).
+ * Multiple words → first letter of each, filler words lowercase
+ * (Keeper of the Blight → KotB).
+ */
+const FILLER_WORDS = new Set(['of', 'the', 'and', 'in', 'at', 'to', 'for', 'with', 'by', 'an', 'a', 'or']);
+
+function avraeAbbrev(name) {
+  const words = name.trim().split(/\s+/);
+  if (words.length === 0 || words[0] === '') return '??';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return words.map(w => {
+    const lower = w.toLowerCase();
+    if (FILLER_WORDS.has(lower)) return lower[0];
+    return lower[0].toUpperCase();
+  }).join('');
+}
+
 // ── OBR entry point ─────────────────────────────────────────────────────
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
 
 OBR.onReady(async () => {
   try {
@@ -166,7 +193,13 @@ OBR.onReady(async () => {
   const loadedSources = new Map();
   const loadingSources = new Set();
   const activeSources = new Set();
-  let fuse;  // Fuse index, rebuilt on every render
+  let fuse;
+  let fuseDirty = false;
+
+  let hiddenMode = false;
+  let lockedMode = true;
+  let labelMode = true;
+  const monsterCounters = new Map();
 
   // sessionStorage cache: survives popover close/reopen within the same tab,
   // so loading a source is instant the second time.
@@ -200,18 +233,23 @@ OBR.onReady(async () => {
     toastEl._timer = setTimeout(() => toastEl.classList.remove('show'), 2000);
   }
 
-  /*
-   * Rebuild the visible result list based on the search query.
-   * Called on every keystroke and whenever sources are added/removed.
-   */
-  function render() {
-    console.log(`[5etools] render: ${allMonsters.length} monsters in pool`);
+  function rebuildIndex() {
     fuse = new Fuse(allMonsters, {
       keys: ['name'],
       threshold: 0.4,
       distance: 80,
       minMatchCharLength: 2,
     });
+    fuseDirty = false;
+  }
+
+  /*
+   * Rebuild the visible result list based on the search query.
+   * Called on every keystroke (debounced) and whenever sources are added/removed.
+   */
+  function render() {
+    console.log(`[5etools] render: ${allMonsters.length} monsters in pool`);
+    if (fuseDirty || !fuse) rebuildIndex();
 
     const q = searchEl.value.trim();
     const list = q
@@ -234,7 +272,7 @@ OBR.onReady(async () => {
 
     resultsEl.innerHTML = list.map(m => {
       return `<div class="monster-row" data-id="${m.name}|${m.source}">
-        <img class="monster-token" alt="" crossorigin="anonymous" loading="lazy">
+        <img class="monster-token" alt="" crossorigin="anonymous" loading="lazy" data-token-src="${TOKEN_BASE}/${m.source}/${encodeURIComponent(tokenName(m.name))}.webp">
         <div class="monster-info">
           <div class="monster-name">${m.name}</div>
           <div class="monster-type">${m.type} \u00b7 ${m.size}</div>
@@ -243,21 +281,39 @@ OBR.onReady(async () => {
         <div class="monster-cr">${m.cr}</div>
       </div>`;
     }).join('');
-
-    resultsEl.querySelectorAll('.monster-row').forEach(row => {
-      const img = row.querySelector('.monster-token');
-      if (img) {
-        const [name, source] = row.dataset.id.split('|');
-        img.src = `${TOKEN_BASE}/${source}/${encodeURIComponent(tokenName(name))}.webp`;
-        img.onerror = () => { img.style.display = 'none'; };
-      }
-      row.addEventListener('click', () => {
-        const [name, source] = row.dataset.id.split('|');
-        const mon = allMonsters.find(m => m.name === name && m.source === source);
-        if (mon) dropToken(mon);
-      });
-    });
   }
+
+  // ── Event delegation & lazy image loading ──────────────────────────
+
+  resultsEl.addEventListener('click', (e) => {
+    const row = e.target.closest('.monster-row');
+    if (!row) return;
+    const [name, source] = row.dataset.id.split('|');
+    const mon = allMonsters.find(m => m.name === name && m.source === source);
+    if (mon) dropToken(mon);
+  });
+
+  const imageObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        const img = entry.target;
+        const src = img.dataset.tokenSrc;
+        if (src && !img.src) {
+          img.src = src;
+          img.onerror = () => { img.style.display = 'none'; };
+        }
+        imageObserver.unobserve(img);
+      }
+    }
+  }, { root: resultsEl, rootMargin: '200px' });
+
+  const tokenObserver = new MutationObserver(() => {
+    resultsEl.querySelectorAll('.monster-token:not([data-observed])').forEach(img => {
+      img.dataset.observed = '';
+      imageObserver.observe(img);
+    });
+  });
+  tokenObserver.observe(resultsEl, { childList: true, subtree: true });
 
   // ── Token dropping ──────────────────────────────────────────────────
 
@@ -311,6 +367,11 @@ OBR.onReady(async () => {
       const px = (SIZE_FACTOR[monster.size] || SIZE_FACTOR.M) * sceneDpi;
       const src = await preloadImage(url);
 
+      // Per-monster counter for label suffix.
+      const counterKey = monster.name.toLowerCase();
+      const seq = (monsterCounters.get(counterKey) || 0) + 1;
+      monsterCounters.set(counterKey, seq);
+
       /*
        * ImageBuilder takes image details in the constructor:
        *   buildImage({ width, height, url, mime }, { dpi, offset })
@@ -318,14 +379,15 @@ OBR.onReady(async () => {
        * scales the image by sceneDpi / gridDpi, which shifts the offset
        * pivot and renders at the wrong size.
        */
-      const item = buildImage(
+      const builder = buildImage(
         { width: src.width, height: src.height, url, mime: src.type || 'image/webp' },
         { dpi: sceneDpi, offset: { x: src.width / 2, y: src.height / 2 } },
       )
         .name(monster.name)
         .position(position)
         .scale({ x: px / src.width, y: px / src.height })
-        .visible(true)
+        .visible(!hiddenMode)
+        .locked(lockedMode)
         .layer('CHARACTER')
         .metadata({
           [METADATA_KEY]: {
@@ -337,16 +399,77 @@ OBR.onReady(async () => {
             type: monster.type,
             size: monster.size,
           },
-        })
-        .build();
+        });
+
+      if (labelMode) {
+        builder
+          .plainText(`${avraeAbbrev(monster.name)}${seq}`)
+          .fontSize(36)
+          .fontWeight(700)
+          .textAlign('CENTER')
+          .textAlignVertical('BOTTOM')
+          .textPadding(6)
+          .textFillColor('#ffffff')
+          .textStrokeColor('#000000')
+          .textStrokeWidth(3);
+      }
+
+      const item = builder.build();
 
       console.log('built item:', item);
       await OBR.scene.items.addItems([item]);
-      showToast(`\u2713 ${monster.name} placed on board`);
+
+      if (hiddenMode) {
+        showToast(`\u2713 ${monster.name} placed (hidden)`);
+      } else {
+        showToast(`\u2713 ${monster.name} placed on board`);
+      }
     } catch (err) {
       console.error('dropToken failed:', err);
       showToast('Failed to place token', true);
     }
+  }
+
+  // ── Toolbar ─────────────────────────────────────────────────────────
+
+  function buildToolbar() {
+    const toolbar = document.getElementById('toolbar');
+    if (!toolbar) return;
+
+    // Hidden mode toggle
+    const hiddenLabel = document.createElement('label');
+    hiddenLabel.className = 'toolbar-toggle';
+    const hiddenCheck = document.createElement('input');
+    hiddenCheck.type = 'checkbox';
+    hiddenCheck.addEventListener('change', () => { hiddenMode = hiddenCheck.checked; });
+    hiddenLabel.appendChild(hiddenCheck);
+    hiddenLabel.appendChild(document.createTextNode(' Hidden'));
+
+    // Separator
+    const sep = document.createElement('span');
+    sep.className = 'toolbar-sep';
+
+    // Labels toggle
+    const labelsLabel = document.createElement('label');
+    labelsLabel.className = 'toolbar-toggle';
+    const labelsCheck = document.createElement('input');
+    labelsCheck.type = 'checkbox';
+    labelsCheck.checked = true;
+    labelsCheck.addEventListener('change', () => { labelMode = labelsCheck.checked; });
+    labelsLabel.appendChild(labelsCheck);
+    labelsLabel.appendChild(document.createTextNode(' Avrae Names'));
+
+    // Locked toggle
+    const lockedLabel = document.createElement('label');
+    lockedLabel.className = 'toolbar-toggle';
+    const lockedCheck = document.createElement('input');
+    lockedCheck.type = 'checkbox';
+    lockedCheck.checked = true;
+    lockedCheck.addEventListener('change', () => { lockedMode = lockedCheck.checked; });
+    lockedLabel.appendChild(lockedCheck);
+    lockedLabel.appendChild(document.createTextNode(' Locked'));
+
+    toolbar.append(hiddenLabel, sep, labelsLabel, lockedLabel);
   }
 
   // ── Source book chip builder ────────────────────────────────────────
@@ -375,6 +498,7 @@ OBR.onReady(async () => {
           btn.classList.add('active');
           allMonsters.push(...loadedSources.get(code));
         }
+        fuseDirty = true;
         saveCache();
         render();
         return;
@@ -402,6 +526,7 @@ OBR.onReady(async () => {
         activeSources.add(code);
         btn.classList.add('active');
         allMonsters.push(...monsters);
+        fuseDirty = true;
         saveCache();
         render();
 
@@ -479,12 +604,15 @@ OBR.onReady(async () => {
         console.error(err);
       }
     }
+    fuseDirty = true;
     saveCache();
     loadAllBtn.classList.remove('loading');
     loadAllBtn.textContent = '\u26A0\uFE0F All Core';
     render();
     showToast(`Loaded ${allMonsters.length} monsters total`);
   });
+
+  buildToolbar();
 
   sourcesBar.appendChild(loadAllBtn);
 
@@ -509,6 +637,7 @@ OBR.onReady(async () => {
       allMonsters.push(...loadedSources.get(code));
     }
   }
+  if (allMonsters.length > 0) fuseDirty = true;
   render();
 
   // ── Debug: force-drop a token at (0,0) to verify coordinates ──────
@@ -555,5 +684,5 @@ OBR.onReady(async () => {
     });
   }
 
-  searchEl.addEventListener('input', render);
+  searchEl.addEventListener('input', debounce(render, 150));
 });
