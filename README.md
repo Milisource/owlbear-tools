@@ -4,6 +4,7 @@
 [![Owlbear Rodeo Extension](https://img.shields.io/badge/Owlbear%20Rodeo-Extension-8A2BE2)](#)
 
 Search the 5e.tools bestiary from inside Owlbear Rodeo and drop monster tokens directly onto the board. Pick a source book, find your monster, click — the token lands where you're looking. Maybe more? Who knows!
+
 ---
 
 ## Install
